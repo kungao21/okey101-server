@@ -1,0 +1,21 @@
+# Go
+/bin/
+/dist/
+*.exe
+*.out
+*.test
+
+# Env / secrets
+.env
+*.pem
+*.key
+
+# Logs
+*.log
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
