@@ -1,0 +1,40 @@
+services:
+  api:
+    image: golang:1.22-alpine
+    container_name: okey101-api
+    working_dir: /app
+    volumes:
+      - ../server:/app
+    command: sh -c "go mod tidy && go run ."
+    ports:
+      - "8080:8080"
+    depends_on:
+      - redis
+      - postgres
+    environment:
+      REDIS_ADDR: redis:6379
+      POSTGRES_DSN: postgres://okey:okey@postgres:5432/okeydb?sslmode=disable
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: okey101-redis
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: okey101-postgres
+    environment:
+      POSTGRES_USER: okey
+      POSTGRES_PASSWORD: okey
+      POSTGRES_DB: okeydb
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+
+volumes:
+  pgdata:

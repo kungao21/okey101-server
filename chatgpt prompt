@@ -1,0 +1,13 @@
+Unity ile 3D online Okey 101 yapıyorum. Local geliştirme: WSL2 Ubuntu 22.04 + Docker (native Linux Docker).
+Backend: Go WebSocket + Redis + PostgreSQL. Hedef: compose yapısıyla VPS’e birebir taşımak.
+
+Şu an durum:
+- docker compose up ile api/redis/postgres çalışıyor
+- WebSocket JSON mesajları hazır
+- ROOM_CREATE / ROOM_JOIN / ROOM_SNAPSHOT çalışıyor
+- GAME_START (min 2 oyuncu) çalışıyor
+- turnSeat + turnPhase (WAIT_DRAW/WAIT_DISCARD) çalışıyor
+- websocat’ı container içinde kullanarak test ediyorum: docker exec -it okey101-api sh → websocat ws://127.0.0.1:8080/ws
+
+Şimdi checklist’e göre C aşamasındayım: “Taş seti 106 taş + okey belirleme + başlangıç dağıtımı + server doğrulamalı draw/discard” kısmına geçmek istiyorum.
+Sadece değişecek satırları (patch) vererek ilerleyelim.
