@@ -90,7 +90,7 @@ type DiscardEvent struct {
 
 type Room struct {
 	ID      string          `json:"roomId"`
-	State   string          `json:"state"` // LOBBY / AUTO_START / BUILD_PILES / DICE / DEALING / PLAYING
+	State string `json:"state"` // LOBBY / AUTO_START / BUILD_PILES / DICE / DICE_RESULT / DEALING / PLAYING
 	Players map[int]*Player `json:"players"`
 	OwnerID string          `json:"ownerId"`
 	Updated int64           `json:"updatedAt"`
@@ -565,6 +565,8 @@ func (r *Room) broadcastSnapshot() {
 	}
 }
 
+
+
 func (r *Room) attachConn(userID string, c *Conn) {
 	r.mu.Lock()
 	r.conns[userID] = c
@@ -724,7 +726,7 @@ func (r *Room) startIntermissionTimer() {
 func (r *Room) startBuildPilesLocked() {
 	// precondition: r.mu LOCK altında
 	r.State = "BUILD_PILES"
-	r.BuildPileIdx = 0
+	r.BuildPileIdx = 1
 
 	// reset game state
 	r.Hands = make(map[int][]string, 4)
@@ -774,7 +776,7 @@ func (r *Room) startBuildPilesLocked() {
 	// her saniye 1 deste "dizildi"
 	// (sadece snapshot'ta BuildPileIdx artacak, piles zaten hazır)
 	r.Updated = time.Now().Unix()
-	go r.broadcastSnapshot()
+	//go r.broadcastSnapshot()
 
 	go func() {
 		t := time.NewTicker(1 * time.Second)
@@ -797,12 +799,25 @@ func (r *Room) startBuildPilesLocked() {
 
 			done := (r.BuildPileIdx >= 15)
 			if done {
-				// dice aşamasına geç
+				// ✅ 1) Önce BUILD_PILES / idx=15 snapshot'ını garanti yayınla
+				r.mu.Unlock()
+				r.broadcastSnapshot() // goroutine değil: sırayı garanti eder
+
+				// ✅ 2) Sonra DICE'a geç (LOCK altında)
+				r.mu.Lock()
+				// arada state değiştiyse güvenlik
+				if r.State != "BUILD_PILES" {
+					r.mu.Unlock()
+					return
+				}
 				r.startDiceLocked()
 				r.mu.Unlock()
+
+				// ✅ 3) DICE snapshot'ını da yayınla
 				go r.broadcastSnapshot()
 				return
 			}
+
 			r.mu.Unlock()
 			go r.broadcastSnapshot()
 		}
@@ -857,7 +872,8 @@ func (r *Room) startDiceLocked() {
 			}
 
 			// her saniye zar değişsin
-			r.DiceValue = randDice1to6()
+			//r.DiceValue = randDice1to6()
+			r.DiceValue = 5
 			if r.DiceLeft > 0 { r.DiceLeft-- }
 			r.Updated = time.Now().Unix()
 
@@ -868,7 +884,7 @@ func (r *Room) startDiceLocked() {
 				r.applyDiceAndPrepareDealLocked()
 
 				r.mu.Unlock()
-				go r.broadcastSnapshot()
+				
 				return
 			}
 
@@ -878,6 +894,8 @@ func (r *Room) startDiceLocked() {
 	}()
 }
 
+
+
 func (r *Room) diceStop(userID string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -885,6 +903,7 @@ func (r *Room) diceStop(userID string) error {
 	if r.State != "DICE" {
 		return errors.New("not in DICE state")
 	}
+
 	// sadece dealer durdurabilir
 	dealerUser := ""
 	if p, ok := r.Players[r.DealerSeat]; ok {
@@ -893,10 +912,14 @@ func (r *Room) diceStop(userID string) error {
 	if dealerUser == "" || dealerUser != userID {
 		return errors.New("only dealer can stop dice")
 	}
-	r.diceStopBy = userID
-	r.Updated = time.Now().Unix()
+
+	// ✅ anında sonucu uygula ve DICE_RESULT'e geç
+	r.DiceLeft = 0
+	r.diceStopBy = userID // istersen debug için kalsın
+	r.applyDiceAndPrepareDealLocked()
 	return nil
 }
+
 
 /* =========================
    H: Apply Dice + Prepare Deal
@@ -939,14 +962,40 @@ func (r *Room) applyDiceAndPrepareDealLocked() {
 	}
 
 	// dealing hazırlığı
+	// ✅ Zar sonucu netleşti: piles nihai (Unity buradan dizsin)
+	r.State = "DICE_RESULT"
+	r.Updated = time.Now().Unix()
+
+	// ✅ DICE_RESULT state'ini ROOM_SNAPSHOT olarak hemen yayınla
+	go r.broadcastSnapshot()
+
+	roomID := r.ID
+	go func() {
+		time.Sleep(1 * time.Second)
+
+		r.mu.Lock()
+		if r.ID != roomID || r.State != "DICE_RESULT" {
+			r.mu.Unlock()
+			return
+		}
+		r.startDealingLocked()
+		r.mu.Unlock()
+
+		// ✅ DEALING state’ini de yayınla
+		go r.broadcastSnapshot()
+	}()
+
+
+}
+
+func (r *Room) startDealingLocked() {
 	r.State = "DEALING"
 	r.DealLeft = DealSeconds
 	r.DealCursor = r.StartPile
-
-	// İlk deste 8'li ve dealer'ın üstüne gider => seatCursor = dealer+1
 	r.DealSeatCursor = nextSeat(r.DealerSeat)
 
-	// dağıtım ticker
+	r.Updated = time.Now().Unix()
+
 	go func() {
 		t := time.NewTicker(1 * time.Second)
 		defer t.Stop()
@@ -958,7 +1007,6 @@ func (r *Room) applyDiceAndPrepareDealLocked() {
 				return
 			}
 			if r.DealLeft <= 0 {
-				// finalize
 				r.finalizeAfterDealLocked()
 				r.mu.Unlock()
 				go r.broadcastSnapshot()
@@ -973,6 +1021,7 @@ func (r *Room) applyDiceAndPrepareDealLocked() {
 		}
 	}()
 }
+
 
 func (r *Room) dealOnePileLocked() {
 	// deal cursor 1..15 wrap
@@ -1612,7 +1661,6 @@ func readPump(c *Conn) {
 				sendErr(c, in.ReqID, "DICE_STOP_REJECTED", err.Error())
 				continue
 			}
-			room.broadcastSnapshot()
 
 		case "DRAW":
 			var p DrawPayload

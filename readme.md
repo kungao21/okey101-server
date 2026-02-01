@@ -43,5 +43,7 @@ burda deneme
 
 github sync için yani push için source controle tıkla solda ordaki message kutusuna update yaz ve commit de, daha sonra sync tuşuna tekrar tıkla.
 
+github desktopda push için sol altta update yaz ve commit de ondan sonra push origine tıkla
+
 
 
